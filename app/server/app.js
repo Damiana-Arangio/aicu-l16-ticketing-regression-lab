@@ -66,8 +66,29 @@ export function createTicketApplication({
   }
 
   function createTicket(input) {
-    const id = idFactory();
     const createdAt = now().toISOString();
+    const duplicateTicket = database
+      .prepare(
+        `
+          SELECT title, customer
+          FROM tickets
+          WHERE substr(created_at, 1, 10) = ?
+        `
+      )
+      .all(createdAt.slice(0, 10))
+      .some(
+        (ticket) =>
+          normalizeDuplicateValue(ticket.title) ===
+            normalizeDuplicateValue(input.title) &&
+          normalizeDuplicateValue(ticket.customer) ===
+            normalizeDuplicateValue(input.customer)
+      );
+
+    if (duplicateTicket) {
+      return null;
+    }
+
+    const id = idFactory();
     const urgencyLabel = computeUrgencyLabel(
       input.priority,
       input.sourceChannel
@@ -142,7 +163,17 @@ export function createTicketApplication({
           return;
         }
 
-        sendJson(response, 201, { ticket: createTicket(input) });
+        const ticket = createTicket(input);
+
+        if (!ticket) {
+          sendJson(response, 409, {
+            code: "DUPLICATE_TICKET",
+            message: "Ticket gia' presente per questo cliente nella giornata corrente."
+          });
+          return;
+        }
+
+        sendJson(response, 201, { ticket });
         return;
       }
 
@@ -175,6 +206,10 @@ export function createTicketApplication({
       database.close();
     }
   };
+}
+
+function normalizeDuplicateValue(value) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function seedTickets(database, now) {
